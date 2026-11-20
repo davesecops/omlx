@@ -129,6 +129,28 @@ def _quantized(folder, bits):
     return folder
 
 
+@pytest.mark.parametrize("bits", [2, 3, 5, 6])
+@pytest.mark.parametrize("group_size", [32, 64])
+def test_widened_codes_are_the_same_integers(bits, group_size):
+    weight = (mx.random.normal((96, 512), key=mx.random.key(bits)) * 0.02).astype(
+        mx.bfloat16
+    )
+    codes, scales, biases = mx.quantize(weight, group_size, bits)
+    wide = tensors.widen(codes, bits)
+    # Unit scales read the codes back as exact integers on any device.
+    one = mx.ones(scales.shape, mx.float32)
+    want = mx.dequantize(codes, one, one * 0, group_size=group_size, bits=bits)
+    got = mx.dequantize(wide, one, one * 0, group_size=group_size, bits=8)
+    assert mx.array_equal(got, want).item()
+    # So the scales and biases rebuild the same weight. Checked on the CPU:
+    # CUDA's dequantize rounds scale * code + bias differently at some widths.
+    cpu = {"group_size": group_size, "stream": mx.cpu}
+    assert mx.array_equal(
+        mx.dequantize(wide, scales, biases, bits=8, **cpu),
+        mx.dequantize(codes, scales, biases, bits=bits, **cpu),
+    ).item()
+
+
 @pytest.mark.parametrize("bits", [8, 5])
 def test_packed_weights_give_the_same_stages(tmp_path, monkeypatch, bits):
     model = _quantized(tmp_path / "model", bits)
