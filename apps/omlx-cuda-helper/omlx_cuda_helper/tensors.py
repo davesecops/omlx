@@ -85,6 +85,10 @@ def from_host(value: HostArray) -> mx.array:
 # GPU, WSL): weights then load on the GPU stream, into the GPU's memory pool.
 weights_on_gpu = False
 
+# Set by the worker when the layers do not all fit unpacked: a family that
+# multiplies packed weights then keeps them packed.
+packed_weights = False
+
 
 def load(model_dir: str | Path, names: list[str]) -> dict[str, mx.array]:
     """The named tensors, lazy until evaluated. Each shard is opened once."""
@@ -125,6 +129,15 @@ def unpack(
     return mx.dequantize(weight, scales, mode=mode, dtype=dtype or mx.bfloat16, **sizes)
 
 
+def widen(weight: mx.array, bits: int) -> mx.array:
+    """Packed codes of ``bits`` each as 8-bit codes: the same integers, so the
+    same scales and biases rebuild the same weight."""
+    k = weight.shape[-1] * 32 // bits
+    unit = mx.ones((*weight.shape[:-1], k // 32), mx.float32)
+    codes = mx.dequantize(weight, unit, unit * 0, group_size=32, bits=bits)
+    return mx.contiguous(codes.astype(mx.uint8)).view(mx.uint32)
+
+
 class Linear:
     """A bias-free linear layer from a dense or a quantized weight.
 
@@ -160,10 +173,17 @@ class Linear:
             if dense:
                 weight = unpack(weight, scales, biases, quant, dtype)
             else:
+                if quant["bits"] not in checkpoint.PACKED_BITS:
+                    weight, quant = widen(weight, quant["bits"]), {**quant, "bits": 8}
                 self.quant = (scales, biases, quant)
         elif dtype is not None:
             weight = weight.astype(dtype)
         self.weight = weight
+
+    @property
+    def dtype(self) -> mx.Dtype:
+        """The dtype the layer computes in: the scales' for a packed weight."""
+        return self.weight.dtype if self.quant is None else self.quant[0].dtype
 
     def parameters(self) -> list[mx.array]:
         extra = [a for a in self.quant[:2] if a is not None] if self.quant else []

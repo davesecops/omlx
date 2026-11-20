@@ -11,7 +11,7 @@ import pytest
 
 mx = pytest.importorskip("mlx.core")
 
-from omlx_cuda_helper import oqh, tensors  # noqa: E402
+from omlx_cuda_helper import checkpoint, oqh, tensors  # noqa: E402
 from omlx_cuda_helper.families import qwen3_5  # noqa: E402
 from omlx_cuda_helper.families.qwen3_5.stage import load_stage  # noqa: E402
 
@@ -33,7 +33,7 @@ def _group(arrays, tag):
     return {n[len(tag) :]: v for n, v in arrays.items() if n.startswith(tag)}
 
 
-def _replay(bounds, capture=None):
+def _replay(bounds, capture=None, model=FIXTURE / "model"):
     """The fixture's chunks through stages cut at ``bounds``.
 
     Yields each chunk's index, the boundary at the end of every stage (by
@@ -44,10 +44,7 @@ def _replay(bounds, capture=None):
     k, sizes, skip = meta["layers"], meta["sizes"], meta["prefix_chunks"]
     assert meta["contract"] == qwen3_5.CONTRACT
     assert all(a >= qwen3_5.FIRST_STAGE_MIN for a in bounds[1:-1])
-    stages = [
-        load_stage(FIXTURE / "model", first, last)
-        for first, last in zip(bounds, bounds[1:])
-    ]
+    stages = [load_stage(model, first, last) for first, last in zip(bounds, bounds[1:])]
     for stage in stages:
         # A layer loaded again after a long prompt runs as at the first load.
         stage.drop_layer()
@@ -114,6 +111,44 @@ def test_stages_reproduce_the_contract_fixture(bounds):
 def test_weights_loaded_into_the_gpu_pool_give_the_same_stages(monkeypatch):
     monkeypatch.setattr(tensors, "weights_on_gpu", True)
     test_stages_reproduce_the_contract_fixture((0, 2, 5))
+
+
+def _quantized(folder, bits):
+    """The fixture model with its linears quantized to ``bits``, group 32."""
+    folder.mkdir()
+    weights = mx.load(str(FIXTURE / "model/model.safetensors"))
+    config = json.loads((FIXTURE / "model/config.json").read_text())
+    config["quantization"] = {"group_size": 32, "bits": bits, "mode": "affine"}
+    for name in [n for n in weights if "_proj" in n and n.endswith(".weight")]:
+        base = name.removesuffix(".weight")
+        weights[name], weights[f"{base}.scales"], weights[f"{base}.biases"] = (
+            mx.quantize(weights[name].astype(mx.bfloat16), 32, bits)
+        )
+    mx.save_safetensors(str(folder / "model.safetensors"), weights)
+    (folder / "config.json").write_text(json.dumps(config))
+    return folder
+
+
+@pytest.mark.parametrize("bits", [8, 5])
+def test_packed_weights_give_the_same_stages(tmp_path, monkeypatch, bits):
+    model = _quantized(tmp_path / "model", bits)
+
+    def hidden():
+        return [
+            np.array(tensors.from_host(cuts[5]["h"]).astype(mx.float32))
+            for _, cuts, _, _ in _replay((0, 2, 5), model=model)
+        ]
+
+    unpacked = hidden()
+    monkeypatch.setattr(tensors, "packed_weights", True)
+    # Each 16-bit layer of this 32-wide model rounds by about 2e-3 either way.
+    for want, got in zip(unpacked, hidden()):
+        assert np.linalg.norm(got - want) / np.linalg.norm(want) < 3e-2
+    # A packed stage holds the files; 5-bit codes are held as 8-bit ones.
+    files = checkpoint.memory_plan(model, qwen3_5.resident)[1]
+    packed = qwen3_5.plan(model, True)[1]
+    assert (packed == files) is (bits == 8)
+    assert all(f <= p < d for f, p, d in zip(files, packed, qwen3_5.plan(model)[1]))
 
 
 def test_a_stage_returns_the_layers_a_block_drafter_reads():

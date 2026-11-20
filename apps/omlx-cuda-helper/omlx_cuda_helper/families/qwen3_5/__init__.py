@@ -11,6 +11,8 @@ from ... import checkpoint
 
 CONTRACT = 1
 FIRST_STAGE_MIN = 1
+# The family can keep its affine weights packed; an oQh weight is unpacked.
+PACKS_WEIGHTS = True
 
 
 def resident(tensor: str) -> bool:
@@ -46,8 +48,9 @@ def check_layout(tensors: dict[str, Any]) -> None:
         raise ValueError("Only checkpoints converted to the MLX layout are supported")
 
 
-def plan(model_dir: str | Path) -> tuple[int, list[int]]:
-    """(bytes outside the layers, bytes per layer) a helper holds."""
+def plan(model_dir: str | Path, packed_weights: bool = False) -> tuple[int, list[int]]:
+    """(bytes outside the layers, bytes per layer) a helper holds; with
+    ``packed_weights`` for a stage that keeps its affine weights packed."""
     config = checkpoint.load_config(model_dir)
     check_layout(checkpoint.tensors(model_dir))
     shared, layers = checkpoint.memory_plan(model_dir, resident)
@@ -71,6 +74,11 @@ def plan(model_dir: str | Path) -> tuple[int, list[int]]:
         if None in packed:
             continue
         bits = checkpoint.quantization(config, base)["bits"]
+        if packed_weights:
+            if bits not in checkpoint.PACKED_BITS:
+                # Held as 8-bit codes.
+                layers[layer] += weight.nbytes * 8 // bits - weight.nbytes
+            continue
         dense = weight.shape[0] * (weight.shape[1] * 32 // bits) * 2
         layers[layer] += dense - weight.nbytes - sum(t.nbytes for t in packed)
     return shared, layers
