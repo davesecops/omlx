@@ -48,9 +48,12 @@ def check_layout(tensors: dict[str, Any]) -> None:
         raise ValueError("Only checkpoints converted to the MLX layout are supported")
 
 
-def plan(model_dir: str | Path, packed_weights: bool = False) -> tuple[int, list[int]]:
+def plan(
+    model_dir: str | Path, packed_weights: bool = False, widen: bool = True
+) -> tuple[int, list[int]]:
     """(bytes outside the layers, bytes per layer) a helper holds; with
-    ``packed_weights`` for a stage that keeps its affine weights packed."""
+    ``packed_weights`` for a stage that keeps its affine weights packed, and
+    ``widen`` when it holds codes of other widths as 8-bit codes."""
     config = checkpoint.load_config(model_dir)
     check_layout(checkpoint.tensors(model_dir))
     shared, layers = checkpoint.memory_plan(model_dir, resident)
@@ -75,7 +78,7 @@ def plan(model_dir: str | Path, packed_weights: bool = False) -> tuple[int, list
             continue
         bits = checkpoint.quantization(config, base)["bits"]
         if packed_weights:
-            if bits not in checkpoint.PACKED_BITS:
+            if widen and bits not in checkpoint.PACKED_BITS:
                 # Held as 8-bit codes.
                 layers[layer] += weight.nbytes * 8 // bits - weight.nbytes
             continue

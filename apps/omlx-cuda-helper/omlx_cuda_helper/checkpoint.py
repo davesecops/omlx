@@ -97,8 +97,9 @@ def quantization(config: dict[str, Any], module: str) -> dict[str, Any] | None:
     return {k: v for k, v in quant.items() if not isinstance(v, dict)}
 
 
-# Code widths MLX's CUDA tensor-core kernel multiplies packed; a packed weight
-# of another width is held as 8-bit codes.
+# Code widths MLX's pipelined CUDA kernel (qmm_sm80) multiplies packed. Other
+# widths run on qmm_naive: the same tensor-core math, without the pipelined
+# loads, so they are held as 8-bit codes when that fits as many layers.
 PACKED_BITS = (4, 8)
 
 # oQh tensors (see ``oqh``): the input rotation signs name an oQh linear.

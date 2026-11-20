@@ -151,8 +151,21 @@ def test_widened_codes_are_the_same_integers(bits, group_size):
     ).item()
 
 
-@pytest.mark.parametrize("bits", [8, 5])
-def test_packed_weights_give_the_same_stages(tmp_path, monkeypatch, bits):
+def _linears(obj, depth=4):
+    """The packed ``Linear`` layers reachable from *obj*."""
+    if isinstance(obj, tensors.Linear):
+        return [obj] if obj.quant else []
+    if depth == 0:
+        return []
+    if isinstance(obj, (list, tuple)):
+        return [x for item in obj for x in _linears(item, depth - 1)]
+    if hasattr(obj, "__dict__"):
+        return [x for v in vars(obj).values() for x in _linears(v, depth - 1)]
+    return []
+
+
+@pytest.mark.parametrize("bits, widen", [(8, True), (5, True), (5, False)])
+def test_packed_weights_give_the_same_stages(tmp_path, monkeypatch, bits, widen):
     model = _quantized(tmp_path / "model", bits)
 
     def hidden():
@@ -163,14 +176,18 @@ def test_packed_weights_give_the_same_stages(tmp_path, monkeypatch, bits):
 
     unpacked = hidden()
     monkeypatch.setattr(tensors, "packed_weights", True)
+    monkeypatch.setattr(tensors, "widen_codes", widen)
     # Each 16-bit layer of this 32-wide model rounds by about 2e-3 either way.
     for want, got in zip(unpacked, hidden()):
         assert np.linalg.norm(got - want) / np.linalg.norm(want) < 3e-2
-    # A packed stage holds the files; 5-bit codes are held as 8-bit ones.
+    # A packed stage holds the files, unless it holds 5-bit codes as 8-bit ones.
     files = checkpoint.memory_plan(model, qwen3_5.resident)[1]
-    packed = qwen3_5.plan(model, True)[1]
-    assert (packed == files) is (bits == 8)
+    packed = qwen3_5.plan(model, True, widen)[1]
+    assert (packed == files) is (bits == 8 or not widen)
     assert all(f <= p < d for f, p, d in zip(files, packed, qwen3_5.plan(model)[1]))
+    # And the stage's linears hold codes of that width.
+    held = {lin.quant[2]["bits"] for lin in _linears(load_stage(model, 0, 5))}
+    assert held == ({bits} if bits == 8 or not widen else {8})
 
 
 def test_a_stage_returns_the_layers_a_block_drafter_reads():

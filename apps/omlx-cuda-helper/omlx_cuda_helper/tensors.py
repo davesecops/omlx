@@ -89,6 +89,10 @@ weights_on_gpu = False
 # multiplies packed weights then keeps them packed.
 packed_weights = False
 
+# Cleared by the worker when holding other code widths as 8-bit codes would
+# fit fewer layers; they then stay packed at their own width.
+widen_codes = True
+
 
 def load(model_dir: str | Path, names: list[str]) -> dict[str, mx.array]:
     """The named tensors, lazy until evaluated. Each shard is opened once."""
@@ -173,7 +177,7 @@ class Linear:
             if dense:
                 weight = unpack(weight, scales, biases, quant, dtype)
             else:
-                if quant["bits"] not in checkpoint.PACKED_BITS:
+                if quant["bits"] not in checkpoint.PACKED_BITS and widen_codes:
                     weight, quant = widen(weight, quant["bits"]), {**quant, "bits": 8}
                 self.quant = (scales, biases, quant)
         elif dtype is not None:

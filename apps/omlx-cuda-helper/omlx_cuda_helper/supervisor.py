@@ -92,6 +92,7 @@ class _Session:
     procs: list[subprocess.Popen] = field(default_factory=list)
     state: str = "loading"
     packed: bool = False
+    widen: bool = True
 
 
 class Supervisor:
@@ -169,20 +170,35 @@ class Supervisor:
                 # The host sizes the layers from the file sizes; what a stage
                 # really loads can be larger, so hold as many as fit.
                 fit = _fit(*planner.plan(model_dir), layers, free, first_min)
-                packed = False
+                packed, packed_widen = False, True
                 if (fit is None or fit[0] < layers) and getattr(
                     planner, "PACKS_WEIGHTS", False
                 ):
                     # Packed weights take their file size and multiply a little
                     # slower, so they stay packed only to hold more layers.
                     more = _fit(*planner.plan(model_dir, True), layers, free, first_min)
+                    # Other code widths multiply faster as 8-bit codes, but
+                    # not at the cost of layers.
+                    native = _fit(
+                        *planner.plan(model_dir, True, widen=False),
+                        layers,
+                        free,
+                        first_min,
+                    )
+                    widen = native is None or (
+                        more is not None and more[0] >= native[0]
+                    )
+                    if not widen:
+                        more = native
                     if more is not None and (fit is None or more[0] > fit[0]):
                         logger.info(
-                            "weights stay packed: %s layers fit, %s unpacked",
+                            "weights stay packed%s: %s layers fit, %s unpacked",
+                            "" if widen else ", codes at their own widths",
                             more[0],
                             fit[0] if fit else 0,
                         )
                         fit, packed = more, True
+                        packed_widen = widen
                 if fit is None:
                     raise RuntimeError("not even one layer fits in the free GPU memory")
                 count, stages = fit
@@ -192,7 +208,7 @@ class Supervisor:
                     )
                 layers = count
                 session = _Session(owner, host, model_dir, model_type, layers, stages)
-                session.packed = packed
+                session.packed, session.widen = packed, packed_widen
                 self._session = session
                 try:
                     readers = self._launch(session, found, warm_tokens, token, bind)
@@ -273,6 +289,8 @@ class Supervisor:
                 command.append("--weights-on-gpu")
             if session.packed:
                 command.append("--packed-weights")
+                if not session.widen:
+                    command.append("--native-widths")
             env = {
                 **os.environ,
                 # nvidia-smi numbers the GPUs by PCI bus. The default CUDA
