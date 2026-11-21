@@ -167,24 +167,24 @@ class Supervisor:
                     raise RuntimeError("no NVIDIA GPU is available")
                 free = [gpu["free"] for gpu in found]
                 first_min = getattr(planner, "FIRST_STAGE_MIN", 1)
+
+                def fits(*how: Any, **options: Any) -> Any:
+                    shared, per_layer = planner.plan(model_dir, *how, **options)
+                    return _fit(shared, per_layer, layers, free, first_min)
+
                 # The host sizes the layers from the file sizes; what a stage
                 # really loads can be larger, so hold as many as fit.
-                fit = _fit(*planner.plan(model_dir), layers, free, first_min)
+                fit = fits()
                 packed, packed_widen = False, True
                 if (fit is None or fit[0] < layers) and getattr(
                     planner, "PACKS_WEIGHTS", False
                 ):
                     # Packed weights take their file size and multiply a little
                     # slower, so they stay packed only to hold more layers.
-                    more = _fit(*planner.plan(model_dir, True), layers, free, first_min)
+                    more = fits(True)
                     # Other code widths multiply faster as 8-bit codes, but
                     # not at the cost of layers.
-                    native = _fit(
-                        *planner.plan(model_dir, True, widen=False),
-                        layers,
-                        free,
-                        first_min,
-                    )
+                    native = fits(True, widen=False)
                     widen = native is None or (
                         more is not None and more[0] >= native[0]
                     )
