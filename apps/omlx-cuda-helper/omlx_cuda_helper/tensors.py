@@ -177,7 +177,13 @@ class Linear:
             if dense:
                 weight = unpack(weight, scales, biases, quant, dtype)
             else:
-                if quant["bits"] not in checkpoint.PACKED_BITS and widen_codes:
+                if quant is None:
+                    raise ValueError(f"{prefix} is quantized without settings")
+                if (
+                    widen_codes
+                    and checkpoint.packable(quant)
+                    and quant["bits"] not in checkpoint.PACKED_BITS
+                ):
                     weight, quant = widen(weight, quant["bits"]), {**quant, "bits": 8}
                 self.quant = (scales, biases, quant)
         elif dtype is not None:

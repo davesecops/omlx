@@ -73,11 +73,14 @@ def plan(
             dense = weight.shape[0] * math.prod(signs.shape) * 2
             layers[layer] += dense - weight.nbytes - sum(t.nbytes for t in packed)
             continue
-        packed = [index.get(f"{base}.{part}") for part in ("scales", "biases")]
-        if None in packed:
+        if f"{base}.scales" not in index:
             continue
-        bits = checkpoint.quantization(config, base)["bits"]
-        if packed_weights:
+        # The floating point modes have no biases.
+        stored = ("scales", "biases")
+        packed = [t for p in stored if (t := index.get(f"{base}.{p}")) is not None]
+        quant = checkpoint.quantization(config, base)
+        bits = quant["bits"]
+        if packed_weights and checkpoint.packable(quant):
             if widen and bits not in checkpoint.PACKED_BITS:
                 # Held as 8-bit codes.
                 layers[layer] += weight.nbytes * 8 // bits - weight.nbytes
