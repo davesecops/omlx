@@ -336,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--warm-tokens", type=int, default=8192)
     parser.add_argument("--host-name", default="")
     parser.add_argument("--a8-min-tokens", type=int)
+    parser.add_argument("--ane", type=json.loads)
     args = parser.parse_args(argv)
     # The session token arrives on stdin so it never shows up in ps.
     token = sys.stdin.readline().strip().encode()
@@ -353,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
     info = mx.device_info()
     mx.set_cache_limit(int(info["memory_size"]))
     mx.set_wired_limit(int(info["max_recommended_working_set_size"]))
-    lm = adapter.load_first(args.model, args.layers, args.a8_min_tokens)
+    lm = adapter.load_first(args.model, args.layers, args.a8_min_tokens, args.ane)
 
     began = time.perf_counter()
     warm = np.arange(args.warm_tokens, dtype=np.int32) % 1000 + 3
@@ -379,6 +380,7 @@ def main(argv: list[str] | None = None) -> int:
         "warm_seconds": warm_seconds,
         "active_gib": mx.get_active_memory() / 2**30,
         "device": info.get("device_name", ""),
+        "ane": int(getattr(lm, "_omlx_ane_procedure_count", 0) or 0),
     }
     marker = _write_marker(
         {

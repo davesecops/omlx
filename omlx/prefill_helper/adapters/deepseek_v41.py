@@ -121,7 +121,13 @@ class DeepseekV41Adapter(StageAdapter):
             if "engram" in layer:
                 layer.engram.embed = _HostRows(lm._config.engram_head_dim)
 
-    def load_first(self, path: str, k: int, a8_min_tokens: int | None = None) -> Any:
+    def load_first(
+        self,
+        path: str,
+        k: int,
+        a8_min_tokens: int | None = None,
+        ane: dict | None = None,
+    ) -> Any:
         model, _ = load(
             path,
             engram_ssd_offload=True,

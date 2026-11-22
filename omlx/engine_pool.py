@@ -81,6 +81,7 @@ from .model_settings import (
     ced_prefill_on,
     ane_prefill_backend,
     ane_prefill_fraction,
+    ane_prefill_options,
     validate_ane_prefill,
 )
 from .patches.inkling2 import INKLING2_MODEL_TYPES
@@ -2455,6 +2456,7 @@ class EnginePool:
                     if a8_prefill_on(settings)
                     else None
                 ),
+                "ane": ane_prefill_options(settings, model_type),
             },
         )
         return True

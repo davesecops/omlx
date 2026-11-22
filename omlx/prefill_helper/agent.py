@@ -492,10 +492,12 @@ def launch(
     host_name: str,
     warm_tokens: int,
     a8_min_tokens: int | None = None,
+    ane: dict | None = None,
 ) -> AgentProcess:
     """Start a session and wait until the helper loaded and warmed its layers.
 
-    ``a8_min_tokens`` has no meaning on a helper daemon and is not sent.
+    ``a8_min_tokens`` and ``ane`` have no meaning on a helper daemon and are
+    not sent.
     """
     adapter = adapter_for(model_type)
     session = secrets.token_bytes(16)

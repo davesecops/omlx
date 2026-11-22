@@ -131,7 +131,13 @@ class Inkling2Adapter(StageAdapter):
         finally:
             lm.model.layers = layers
 
-    def load_first(self, path: str, k: int, a8_min_tokens: int | None = None) -> Any:
+    def load_first(
+        self,
+        path: str,
+        k: int,
+        a8_min_tokens: int | None = None,
+        ane: dict | None = None,
+    ) -> Any:
         maybe_apply_pre_load_patches(path, None, for_vlm=True)
         adapter, loaded = self, set()
 
