@@ -312,7 +312,7 @@ def _prepare_files(
 class FilePrep:
     """Copies a model's helper files before the model is loaded.
 
-    With ``launch`` ({model_type, warm_tokens, a8_min_tokens}) it then starts
+    With ``launch`` ({model_type, warm_tokens, a8_min_tokens, ane}) it then starts
     the helper, for the model being loaded to take over. ``check_only`` only
     reports whether the files are there.
     """
@@ -365,16 +365,20 @@ class FilePrep:
             self._launch = launch
             return True
 
-    def adopt(self, node_id: str, layers: int | None, a8: int | None) -> tuple | None:
+    def adopt(
+        self, node_id: str, layers: int | None, a8: int | None, ane: dict | None
+    ) -> tuple | None:
         """The started helper if it matches the loaded model's choice."""
         with self._lock:
             launched, self.launched = self.launched, None
+            launch = self._launch or {}
             wanted = (
                 self.node_id,
                 self.layers,
-                (self._launch or {}).get("a8_min_tokens"),
+                launch.get("a8_min_tokens"),
+                launch.get("ane"),
             )
-        if launched is not None and wanted != (node_id, layers, a8):
+        if launched is not None and wanted != (node_id, layers, a8, ane):
             launched[3].stop()
             return None
         return launched
@@ -453,6 +457,7 @@ class FilePrep:
                 host_name=computer_name(),
                 warm_tokens=launch["warm_tokens"],
                 a8_min_tokens=launch["a8_min_tokens"],
+                ane=launch.get("ane"),
             )
             with self._lock:
                 if not self._cancel.is_set():
@@ -545,8 +550,11 @@ class PrefillHelperManager:
         speeds_path: Path | None = None,
     ):
         self.model_path = str(Path(model_path).expanduser())
-        # The model's A8 prefill setting, which the helper's layers follow.
+        # The model's A8 and ANE prefill settings, which the helper's layers follow.
         self.a8_min_tokens: int | None = None
+        self.ane: dict | None = None
+        # Whether the helper runs its layers on its ANE, as it reported.
+        self._helper_ane = False
         self.speeds_path = speeds_path or default_speeds_path()
         self._saved: tuple | None = None
         self.model_type, self.adapter, self.lm = model_type, adapter, language_model
@@ -572,8 +580,9 @@ class PrefillHelperManager:
         node_id: str | None,
         layers: int | None,
         a8_min_tokens: int | None = None,
+        ane: dict | None = None,
     ) -> None:
-        self._commands.put(("configure", node_id, layers, a8_min_tokens))
+        self._commands.put(("configure", node_id, layers, a8_min_tokens, ane))
 
     def copy_files(self) -> None:
         self._copy_ok.set()
@@ -638,21 +647,19 @@ class PrefillHelperManager:
                 self._teardown()
                 return
             if kind == "configure":
-                _, node_id, layers, a8 = command
-                if (node_id, layers, a8) == (
+                _, node_id, layers, a8, ane = command
+                if (node_id, layers, a8, ane) == (
                     self.node_id,
                     self.fixed_layers,
                     self.a8_min_tokens,
+                    self.ane,
                 ):
                     # Saving other settings must not restart a stopped helper.
                     continue
                 # Speeds are saved under the helper that measured them.
                 self._teardown()
-                self.node_id, self.fixed_layers, self.a8_min_tokens = (
-                    node_id,
-                    layers,
-                    a8,
-                )
+                self.node_id, self.fixed_layers = node_id, layers
+                self.a8_min_tokens, self.ane = a8, ane
                 wanted, attempt = node_id is not None, 0
                 if not wanted:
                     self._set("off")
@@ -716,7 +723,9 @@ class PrefillHelperManager:
         adopted = None
         if prep is not None:
             self._follow(prep)
-            adopted = prep.adopt(self.node_id, self.fixed_layers, self.a8_min_tokens)
+            adopted = prep.adopt(
+                self.node_id, self.fixed_layers, self.a8_min_tokens, self.ane
+            )
         if adopted is not None:
             target, info, held, process = adopted
         else:
@@ -751,6 +760,7 @@ class PrefillHelperManager:
                 host_name=computer_name(),
                 warm_tokens=self.chunk_tokens,
                 a8_min_tokens=self.a8_min_tokens,
+                ane=self.ane,
             )
         try:
             client = self.connect(target.address, process.port, process.token)
@@ -761,6 +771,7 @@ class PrefillHelperManager:
         # A helper daemon counts what it really loads and may hold fewer
         # layers than this Mac's estimate from the file sizes.
         held = min(held, int(client.info.get("layers") or held))
+        self._helper_ane = bool(client.info.get("ane"))
         saved = self._saved_speeds()
         self._session = PrefillHelperSession(
             client,
@@ -784,6 +795,7 @@ class PrefillHelperManager:
             device=info.get("device"),
             memory=info.get("memory"),
             on_battery=bool(info.get("on_battery")),
+            ane=self._helper_ane,
         )
 
     def _ask(self, **fields: Any) -> None:
@@ -813,23 +825,25 @@ class PrefillHelperManager:
                 raise RuntimeError("cancelled while copying files")
             prep.join(timeout=1.0)
 
-    def _speeds_key(self) -> str:
-        # The folder name survives moving or linking the model elsewhere. A8
-        # changes the helper's speed, so each setting keeps its own.
+    def _speeds_suffix(self) -> str:
+        # A8 and the helper's ANE change its speed, so each keeps its own.
         a8 = ":a8" if self.a8_min_tokens is not None else ""
-        return f"{self.node_id}:{Path(self.model_path).name}{a8}"
+        return a8 + (":ane" if self._helper_ane else "")
+
+    def _speeds_key(self) -> str:
+        # The folder name survives moving or linking the model elsewhere.
+        return f"{self.node_id}:{Path(self.model_path).name}{self._speeds_suffix()}"
 
     def _saved_speeds(self) -> dict[str, Any]:
         data = self._load_speeds()
         if self._speeds_key() in data:
             return data[self._speeds_key()]
         # Older entries were keyed by the full model path.
-        a8 = ":a8" if self.a8_min_tokens is not None else ""
         older = [
             value
             for key, value in data.items()
             if key.startswith(f"{self.node_id}:")
-            and key.endswith(f"/{Path(self.model_path).name}{a8}")
+            and key.endswith(f"/{Path(self.model_path).name}{self._speeds_suffix()}")
         ]
         return max(older, key=lambda value: value.get("at", 0), default={})
 

@@ -192,7 +192,13 @@ class Qwen35Adapter(StageAdapter):
         finally:
             lm.model.layers = layers
 
-    def load_first(self, path: str, k: int, a8_min_tokens: int | None = None) -> Any:
+    def load_first(
+        self,
+        path: str,
+        k: int,
+        a8_min_tokens: int | None = None,
+        ane: dict | None = None,
+    ) -> Any:
         if _custom_loader(path):
             raise ValueError(
                 "this checkpoint needs the server's own loader (ParoQuant or "
@@ -230,6 +236,12 @@ class Qwen35Adapter(StageAdapter):
         if a8_min_tokens is not None:
             apply_qwen35_oq_a8_patch(model, min_tokens=a8_min_tokens)
         mx.eval(lm.parameters())
+        if ane is not None:
+            # Compiles from the loaded weights; its class hooks go on last, as
+            # in the server's engine start.
+            from ...patches.qwen35_ane_prefill import enable_qwen35_ane_prefill
+
+            enable_qwen35_ane_prefill(lm, **ane)
         return lm
 
     def job_feed(

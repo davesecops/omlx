@@ -13,6 +13,7 @@ from omlx.model_settings import (
     ModelSettings,
     ModelSettingsManager,
     a8_prefill_on,
+    ane_prefill_options,
     ced_prefill_on,
     resolve_lora_conflicts,
     resolve_qwen35_prefill_conflicts,
@@ -907,6 +908,38 @@ def test_ced_is_on_until_saved_off_and_a8_off_until_saved_on():
     assert not ced_prefill_on({"deepseek_v41_ced_prefill_enabled": False})
     # Unset values are not written, so they stay distinguishable.
     assert "a8_prefill_enabled" not in settings.to_dict()
+
+
+def test_ane_prefill_options_follow_the_saved_settings():
+    """The engine compiles its layers with these, a Mac prefill helper its own."""
+    assert ane_prefill_options(ModelSettings(), "qwen3_5") is None
+    on = ModelSettings(qwen35_ane_prefill_enabled=True)
+    assert ane_prefill_options(on, "llama") is None
+    assert ane_prefill_options(on, "qwen3_5") == {
+        "sequence_length": 2048,
+        "tail_padding_min_tokens": 0,
+        "fraction": 0.53,
+        "max_layers": 64,
+        "gdn": True,
+        "gdn_fraction": 0.50,
+        "gdn_max_layers": 48,
+        "dual_ane": True,
+        "ane_down_fraction": 0.0,
+        "fused_down": False,
+        "cpu_fraction": 0.0,
+        "cpu_down_fraction": 0.0,
+        "cpu_gdn_fraction": 0.0,
+        "cpu_threads": 8,
+        "cpu_shared_resource": True,
+    }
+    shared = ModelSettings(
+        qwen35_ane_prefill_enabled=True,
+        qwen35_ane_prefill_fraction=0.4,
+        qwen35_ane_prefill_fused_down=True,
+        qwen35_ane_prefill_cpu_enabled=True,
+    )
+    options = ane_prefill_options(shared, "qwen3_5")
+    assert (options["ane_down_fraction"], options["cpu_fraction"]) == (0.4, 0.135)
 
 
 def test_oq_a8_and_ane_prefill_cannot_both_be_enabled():

@@ -214,7 +214,7 @@ def _dsv41_contract():
 TOKEN = b"session-token"
 
 
-def _serve(lm, k, *, once=True, adapter=DSV41, memory_limit=0):
+def _serve(lm, k, *, once=True, adapter=DSV41, memory_limit=0, ane=0):
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)
@@ -223,7 +223,7 @@ def _serve(lm, k, *, once=True, adapter=DSV41, memory_limit=0):
         adapter,
         k,
         TOKEN,
-        {"protocol": wire.PROTOCOL, "layers": k},
+        {"protocol": wire.PROTOCOL, "layers": k, "ane": ane},
         memory_limit=memory_limit,
     )
     thread = threading.Thread(
@@ -800,8 +800,10 @@ class _FakeLauncher:
         copies=(),
         hold=None,
         fits=None,
+        ane_runs=True,
     ):
         self.lm, self.k, self.fits, self.launched = lm, k, fits, []
+        self.ane_runs = ane_runs
         self.version = version or launcher_version()
         self.budget, self.missing = budget, list(missing)
         self.free, self.copies, self.hold = free, list(copies), hold
@@ -857,6 +859,7 @@ class _FakeLauncher:
         host_name,
         warm_tokens,
         a8_min_tokens=None,
+        ane=None,
     ):
         self.launched.append(layers)
         if self.fits is not None and layers > self.fits:
@@ -865,9 +868,12 @@ class _FakeLauncher:
                 "buffer execution failed: Insufficient Memory "
                 "(00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)"
             )
-        listener, thread = _serve(_helper_model(tiny(), layers), layers)
+        runs_ane = ane is not None and self.ane_runs
+        listener, thread = _serve(
+            _helper_model(tiny(), layers), layers, ane=48 if runs_ane else 0
+        )
         server = SimpleNamespace(
-            listener=listener, thread=thread, layers=layers, a8=a8_min_tokens
+            listener=listener, thread=thread, layers=layers, a8=a8_min_tokens, ane=ane
         )
         self.servers.append(server)
         return SimpleNamespace(
@@ -1219,6 +1225,28 @@ def test_manager_starts_a_new_helper_from_the_saved_speeds(tmp_path):
     assert fake.servers[-1].a8 == 256
     assert (attached[-1].unit_helper, attached[-1].unit_host) != measured
     a8.close()
+
+
+def test_a_helper_running_its_layers_on_its_ane_keeps_its_own_speeds(tmp_path):
+    attached, speeds = [], tmp_path / "speeds.json"
+    saved = {"helper": 1e-5, "host": 3e-5, "at": 1.0}
+    speeds.write_text(json.dumps({"node-1:x": saved}))
+    ane = {"sequence_length": 2048}
+    # A helper without an ANE reports none and keeps the speeds it measured.
+    manager = _manager(_FakeLauncher(None, ane_runs=False), attached, speeds)
+    manager.configure("node-1", None, None, ane)
+    _wait_state(manager, "ready")
+    assert not manager.status()["ane"]
+    assert (attached[-1].unit_helper, attached[-1].unit_host) == (1e-5, 3e-5)
+    manager.close()
+
+    fake = _FakeLauncher(None)
+    manager = _manager(fake, attached, speeds)
+    manager.configure("node-1", None, None, ane)
+    _wait_state(manager, "ready")
+    assert fake.servers[-1].ane == ane and manager.status()["ane"]
+    assert (attached[-1].unit_helper, attached[-1].unit_host) != (1e-5, 3e-5)
+    manager.close()
 
 
 # ---------------------------------------------------------------------------

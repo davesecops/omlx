@@ -53,8 +53,7 @@ from ..exceptions import InvalidRequestError
 from ..lora_adapters import apply_adapter
 from ..model_settings import (
     a8_prefill_on,
-    ane_prefill_backend,
-    ane_prefill_fraction,
+    ane_prefill_options,
     ced_prefill_on,
 )
 from ..models.vlm import VLMModelAdapter
@@ -2368,118 +2367,19 @@ class VLMBatchedEngine(BaseEngine):
         # A8 and ANE prefill read affine weights; oQh linears have none.
         oqh = is_oqh_checkpoint(self._model_name)
         ane_on = getattr(self._model_settings, "qwen35_ane_prefill_enabled", False)
+        ane_options = ane_prefill_options(self._model_settings, self.model_type)
         if ane_on and oqh:
             logger.warning("ANE prefill does not read oQh weights; it stays off")
-        elif ane_on and ane_prefill_backend(self.model_type) == "qwen":
-            ane_fraction = ane_prefill_fraction(
-                self._model_settings.qwen35_ane_prefill_fraction, self.model_type
-            )
+        elif ane_options is not None:
             try:
                 from ..patches.qwen35_ane_prefill import enable_qwen35_ane_prefill
 
-                requested_ane_sequence_length = int(
-                    getattr(
-                        self._model_settings,
-                        "qwen35_ane_prefill_sequence_length",
-                        2048,
-                    )
-                )
+                requested_ane_sequence_length = ane_options["sequence_length"]
 
                 def _enable_ane_prefill():
                     return enable_qwen35_ane_prefill(
                         self._vlm_model,
-                        sequence_length=requested_ane_sequence_length,
-                        tail_padding_min_tokens=int(
-                            getattr(
-                                self._model_settings,
-                                "qwen35_ane_prefill_tail_padding_min_tokens",
-                                0,
-                            )
-                            or 0
-                        ),
-                        fraction=ane_fraction,
-                        max_layers=getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_max_layers",
-                            64,
-                        ),
-                        gdn=getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_gdn",
-                            True,
-                        ),
-                        gdn_fraction=getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_gdn_fraction",
-                            0.50,
-                        ),
-                        gdn_max_layers=getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_gdn_max_layers",
-                            48,
-                        ),
-                        dual_ane=getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_dual_ane",
-                            True,
-                        ),
-                        ane_down_fraction=(
-                            ane_fraction
-                            if getattr(
-                                self._model_settings,
-                                "qwen35_ane_prefill_fused_down",
-                                False,
-                            )
-                            else 0.0
-                        ),
-                        fused_down=getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_fused_down",
-                            False,
-                        ),
-                        cpu_fraction=getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_cpu_fraction",
-                            0.135,
-                        )
-                        if getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_cpu_enabled",
-                            False,
-                        )
-                        else 0.0,
-                        cpu_down_fraction=getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_cpu_down_fraction",
-                            0.0,
-                        )
-                        if getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_cpu_enabled",
-                            False,
-                        )
-                        else 0.0,
-                        cpu_gdn_fraction=getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_cpu_gdn_fraction",
-                            0.0,
-                        )
-                        if getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_cpu_enabled",
-                            False,
-                        )
-                        else 0.0,
-                        cpu_threads=getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_cpu_threads",
-                            8,
-                        ),
-                        cpu_shared_resource=getattr(
-                            self._model_settings,
-                            "qwen35_ane_prefill_cpu_shared_resource",
-                            True,
-                        ),
+                        **ane_options,
                         install_dispatch=False,
                         packed_projections=qwen35_packed_linear.enabled(
                             self._vlm_model
@@ -3052,6 +2952,7 @@ class VLMBatchedEngine(BaseEngine):
                     if a8_prefill_on(settings)
                     else None
                 ),
+                ane_prefill_options(settings, self.model_type),
             )
 
     @property

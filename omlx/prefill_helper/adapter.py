@@ -158,10 +158,17 @@ class StageAdapter:
                 files.add(name)
         return files
 
-    def load_first(self, path: str, k: int, a8_min_tokens: int | None = None) -> Any:
+    def load_first(
+        self,
+        path: str,
+        k: int,
+        a8_min_tokens: int | None = None,
+        ane: dict | None = None,
+    ) -> Any:
         """Helper: load layers ``[0, k)`` of a checkpoint; returns the module
-        ``run_first`` takes. ``a8_min_tokens`` is the host model's A8 prefill
-        setting (None when off); families without A8 ignore it."""
+        ``run_first`` takes. ``a8_min_tokens`` and ``ane`` are the host model's
+        A8 and ANE prefill settings (None when off); families without them
+        ignore them."""
         raise NotImplementedError
 
     def job_feed(

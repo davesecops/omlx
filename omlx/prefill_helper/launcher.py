@@ -448,6 +448,7 @@ def launch(
     host_name: str,
     warm_tokens: int,
     a8_min_tokens: int | None = None,
+    ane: dict | None = None,
 ) -> HelperProcess:
     """Start the helper and wait until it has loaded and warmed its layers."""
     token = secrets.token_hex(32).encode()
@@ -469,6 +470,8 @@ def launch(
     )
     if a8_min_tokens is not None:
         arguments += ("--a8-min-tokens", str(a8_min_tokens))
+    if ane is not None:
+        arguments += ("--ane", json.dumps(ane, separators=(",", ":")))
     remote = f"/usr/bin/caffeinate -i {target.python} " + " ".join(
         shlex.quote(part) for part in arguments
     )

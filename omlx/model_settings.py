@@ -132,6 +132,43 @@ def ane_prefill_fraction(value: float | None, model_type: str | None) -> float:
     return 1 / 3 if ane_prefill_backend(model_type) == "k2" else 0.53
 
 
+def ane_prefill_options(settings: Any, model_type: str | None) -> dict | None:
+    """``enable_qwen35_ane_prefill`` arguments for a Qwen model's settings.
+
+    None when ANE prefill is off. The engine compiles its layers with these,
+    and a Mac prefill helper the layers it holds.
+    """
+
+    def get(name: str, default: Any) -> Any:
+        key = f"qwen35_ane_prefill_{name}"
+        if isinstance(settings, dict):
+            return settings.get(key, default)
+        return getattr(settings, key, default)
+
+    if not get("enabled", False) or ane_prefill_backend(model_type) != "qwen":
+        return None
+    fraction = ane_prefill_fraction(get("fraction", None), model_type)
+    fused_down = get("fused_down", False)
+    cpu = get("cpu_enabled", False)
+    return {
+        "sequence_length": int(get("sequence_length", 2048)),
+        "tail_padding_min_tokens": int(get("tail_padding_min_tokens", 0) or 0),
+        "fraction": fraction,
+        "max_layers": get("max_layers", 64),
+        "gdn": get("gdn", True),
+        "gdn_fraction": get("gdn_fraction", 0.50),
+        "gdn_max_layers": get("gdn_max_layers", 48),
+        "dual_ane": get("dual_ane", True),
+        "ane_down_fraction": fraction if fused_down else 0.0,
+        "fused_down": fused_down,
+        "cpu_fraction": get("cpu_fraction", 0.135) if cpu else 0.0,
+        "cpu_down_fraction": get("cpu_down_fraction", 0.0) if cpu else 0.0,
+        "cpu_gdn_fraction": get("cpu_gdn_fraction", 0.0) if cpu else 0.0,
+        "cpu_threads": get("cpu_threads", 8),
+        "cpu_shared_resource": get("cpu_shared_resource", True),
+    }
+
+
 def validate_ane_prefill(settings: dict, model_type: str | None) -> None:
     """Validate common controls against the selected backend's limits."""
     backend = ane_prefill_backend(model_type)
