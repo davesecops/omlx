@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.metadata
 import json
 import logging
+import math
 import os
 import secrets
 import signal
@@ -26,8 +27,25 @@ from . import READY_PREFIX, families, gpus
 
 logger = logging.getLogger("omlx_cuda_helper.supervisor")
 
-# Activations of one chunk and allocator headroom on each GPU.
-RESERVE_BYTES = 6 << 30
+
+def reserve_bytes(gib: str | None) -> int:
+    """The reserve for ``OMLX_HELPER_RESERVE_GIB``: 6 GiB when it is unset."""
+    if not gib or not gib.strip():
+        return 6 << 30
+    try:
+        value = float(gib)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(
+            f"OMLX_HELPER_RESERVE_GIB must be a positive number of GiB, not {gib!r}"
+        )
+    return int(value * (1 << 30))
+
+
+# Activations of one chunk and allocator headroom on each GPU; the host plans
+# with the reserve the helper reports.
+RESERVE_BYTES = reserve_bytes(os.environ.get("OMLX_HELPER_RESERVE_GIB"))
 _READY_TIMEOUT_S = 900.0
 
 

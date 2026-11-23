@@ -28,6 +28,7 @@ from omlx_cuda_helper.supervisor import (  # noqa: E402
     RESERVE_BYTES,
     Supervisor,
     plan_stages,
+    reserve_bytes,
 )
 from omlx_cuda_helper.worker import (  # noqa: E402
     WINDOW,
@@ -291,6 +292,14 @@ def test_a_silent_peer_does_not_hold_the_data_port(monkeypatch):
     sock = socket.create_connection(("127.0.0.1", port), timeout=5)
     assert Upstream(sock, TOKEN).info["protocol"] == 1
     silent.close()
+
+
+def test_the_reserve_can_be_set_in_gib():
+    assert reserve_bytes(None) == reserve_bytes(" ") == 6 << 30
+    assert reserve_bytes("2.5") == 5 << 29
+    for bad in ("0", "-1", "abc", "inf", "nan"):
+        with pytest.raises(ValueError, match="positive number of GiB"):
+            reserve_bytes(bad)
 
 
 def test_plan_splits_layers_evenly_within_each_gpu_memory():
