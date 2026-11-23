@@ -22,6 +22,8 @@ docker logs -f omlx-helper
 
 Host networking lets the oMLX Cluster tab find the helper. Arguments after the image name go to `serve` (see the options below), for example `--name gpu-box`.
 
+Each GPU keeps 6 GiB free beside its layers for a chunk's activations and the allocator. On a card where that is a large share, such as a 24 GB RTX 4090, `-e OMLX_HELPER_RESERVE_GIB=2.5` leaves room for more layers; oMLX 0.8.3 and later plan with the reserve the helper reports. Try your longest prompt after lowering it: too little can fail a prompt that the default runs.
+
 Windows (Docker Desktop):
 
 ```powershell
