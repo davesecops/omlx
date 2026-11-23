@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import importlib
 import queue
 import shutil
 import socket
@@ -355,7 +354,7 @@ def test_supervisor_runs_stage_processes_and_frees_them(tmp_path, monkeypatch):
 
 
 def test_supervisor_keeps_weights_packed_to_hold_more_layers(tmp_path, monkeypatch):
-    # Room for the shared tensors and 4 unpacked layers, or 8 packed ones.
+    # 1 MiB shared, 1 MiB an unpacked layer, 512 KiB a packed one.
     gpu = {
         "index": 0,
         "name": "GPU",
@@ -381,42 +380,6 @@ def test_supervisor_keeps_weights_packed_to_hold_more_layers(tmp_path, monkeypat
     )
     assert ready["hello"]["layers"] == 8
     assert "--packed-weights" in supervisor._session.procs[0].args
-    # Widened codes fit every layer too, so they are widened.
-    assert "--native-widths" not in supervisor._session.procs[0].args
-    supervisor.stop(owner)
-
-
-def test_supervisor_keeps_code_widths_when_widening_holds_fewer_layers(
-    tmp_path, monkeypatch
-):
-    # Room for the shared tensors and 6 widened layers, or 8 at their own widths.
-    gpu = {
-        "index": 0,
-        "name": "GPU",
-        "total": 24 << 30,
-        "free": RESERVE_BYTES + (4 << 20),
-    }
-    monkeypatch.setattr(gpus, "gpus", lambda only=None: [gpu])
-    monkeypatch.setitem(
-        families.FAMILIES, "fake", families.Family(contract=7, module="fake_family")
-    )
-    monkeypatch.setattr(importlib.import_module("fake_family"), "NATIVE_BYTES", 3 << 17)
-    worker = [sys.executable, str(Path(__file__).parent / "fake_worker.py")]
-    supervisor = Supervisor(None, tmp_path / "run", worker=worker)
-    owner = object()
-    ready = supervisor.start(
-        owner,
-        model_dir=str(tmp_path / "Model"),
-        model_type="fake",
-        layers=8,
-        warm_tokens=8,
-        host={"node_id": "studio", "name": "Studio"},
-        token=TOKEN,
-        bind="127.0.0.1",
-    )
-    assert ready["hello"]["layers"] == 8
-    args = supervisor._session.procs[0].args
-    assert "--packed-weights" in args and "--native-widths" in args
     supervisor.stop(owner)
 
 

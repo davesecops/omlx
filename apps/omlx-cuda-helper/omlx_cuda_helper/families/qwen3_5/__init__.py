@@ -11,7 +11,6 @@ from ... import checkpoint
 
 CONTRACT = 1
 FIRST_STAGE_MIN = 1
-# The family can keep its affine weights packed; an oQh weight is unpacked.
 PACKS_WEIGHTS = True
 
 
@@ -48,17 +47,13 @@ def check_layout(tensors: dict[str, Any]) -> None:
         raise ValueError("Only checkpoints converted to the MLX layout are supported")
 
 
-def plan(
-    model_dir: str | Path, packed_weights: bool = False, widen: bool = True
-) -> tuple[int, list[int]]:
-    """(bytes outside the layers, bytes per layer) a helper holds; with
-    ``packed_weights`` for a stage that keeps its affine weights packed, and
-    ``widen`` when it holds codes of other widths as 8-bit codes."""
+def plan(model_dir: str | Path, packed_weights: bool = False) -> tuple[int, list[int]]:
+    """(bytes outside the layers, bytes per layer) a helper holds, keeping
+    affine weights packed with ``packed_weights``."""
     config = checkpoint.load_config(model_dir)
     check_layout(checkpoint.tensors(model_dir))
     shared, layers = checkpoint.memory_plan(model_dir, resident)
-    # A stage unpacks every linear of a layer to a dense 16-bit weight, which
-    # takes more than its packed tensors. The embedding stays packed.
+    # An unpacked linear takes its dense 16-bit size. The embedding stays packed.
     index = checkpoint.tensors(model_dir)
     for name, weight in index.items():
         base = name.removesuffix(".weight")
@@ -79,12 +74,8 @@ def plan(
         stored = ("scales", "biases")
         packed = [t for p in stored if (t := index.get(f"{base}.{p}")) is not None]
         quant = checkpoint.quantization(config, base)
-        bits = quant["bits"]
         if packed_weights and checkpoint.packable(quant):
-            if widen and bits not in checkpoint.PACKED_BITS:
-                # Held as 8-bit codes.
-                layers[layer] += weight.nbytes * 8 // bits - weight.nbytes
             continue
-        dense = weight.shape[0] * (weight.shape[1] * 32 // bits) * 2
+        dense = weight.shape[0] * (weight.shape[1] * 32 // quant["bits"]) * 2
         layers[layer] += dense - weight.nbytes - sum(t.nbytes for t in packed)
     return shared, layers

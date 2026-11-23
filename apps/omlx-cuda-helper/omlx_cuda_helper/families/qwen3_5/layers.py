@@ -37,14 +37,13 @@ class Weights:
         return self.arrays[self.root + name]
 
     def linear(self, name: str) -> Linear:
-        """A linear layer in the dtype the checkpoint computes in, dense unless
-        the stage keeps its affine weights packed (``checkpoint.packable``)."""
+        """A linear layer in the dtype the checkpoint computes in, packed when
+        the stage keeps its affine weights packed."""
         path = self.root + name
         quant = checkpoint.quantization(self.config, path)
         packed = (
             tensors.packed_weights
             and f"{path}.scales" in self.arrays
-            and not oqh.is_oqh(self.arrays, path)
             and checkpoint.packable(quant)
         )
         return Linear(self.arrays, path, quant, dense=not packed)

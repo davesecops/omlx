@@ -64,9 +64,13 @@ def gpus(only: list[int] | None = None) -> list[dict[str, Any]]:
     return found
 
 
-# What MLX does not count on a card: CUDA's context and the work buffers of
-# cuBLAS and cuDNN, which grow with a long prompt's attention. 5% of a 24 GB
-# card (1.2 GiB) ran out at a 128K-token prompt; 1.8 GiB did not.
+def smi_error() -> str:
+    """Why ``gpus`` found none; nvidia-smi writes its errors to stdout."""
+    return " ".join(_run("nvidia-smi", "-L").split())
+
+
+# What MLX does not count on a card: CUDA's context and the cuBLAS and cuDNN
+# work buffers, which grow with a long prompt.
 UNCOUNTED_BYTES = 2 << 30
 
 
@@ -76,7 +80,7 @@ def memory_limit(gpu: dict[str, Any]) -> int:
     On an integrated GPU that is the free RAM its layers were planned with.
     """
     if gpu.get("integrated"):
-        return int(gpu["free"])
+        return gpu["free"]
     total = int(gpu["total"])
     return total - max(int(total * 0.05), UNCOUNTED_BYTES)
 

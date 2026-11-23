@@ -99,18 +99,9 @@ def quantization(config: dict[str, Any], module: str) -> dict[str, Any] | None:
 
 def packable(quant: dict[str, Any] | None) -> bool:
     """Whether a stage may keep a quantized linear packed: affine codes only.
-
-    The floating point modes (mxfp4, mxfp8, nvfp4) keep 8-bit exponent scales,
-    so a packed one has no 16-bit dtype to compute in; they are read dense.
-    oQh linears (see ``oqh``) are read dense as well.
-    """
+    The floating point modes have no 16-bit scales to compute in."""
     return quant is not None and quant.get("mode", "affine") == "affine"
 
-
-# Code widths MLX's pipelined CUDA kernel (qmm_sm80) multiplies packed. Other
-# widths run on qmm_naive: the same tensor-core math, without the pipelined
-# loads, so they are held as 8-bit codes when that fits as many layers.
-PACKED_BITS = (4, 8)
 
 # oQh tensors (see ``oqh``): the input rotation signs name an oQh linear.
 OQH_SIGNS = "oqh_signs"
